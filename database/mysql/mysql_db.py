@@ -68,6 +68,10 @@ options:
     required: false
     default: true
     version_added: "2.1"
+  mysqlpath:
+    description:
+      - Use this path for mysql and mysqldump binaries
+    required: false
 author: "Ansible Core Team"
 requirements:
    - mysql (command line binary)
@@ -86,7 +90,7 @@ EXAMPLES = '''
 - mysql_db: name=my_db state=import target=/tmp/dump.sql.bz2
 
 # Dumps all databases to hostname.sql
-- mysql_db: state=dump name=all target=/tmp/{{ inventory_hostname }}.sql
+- mysql_db: state=dump name=all target=/tmp/{{ inventory_hostname }}.sql mysqlpath=/opt/mysql/bin
 
 # Imports file.sql similiar to mysql -u <username> -p <password> < hostname.sql
 - mysql_db: state=import name=all target=/tmp/{{ inventory_hostname }}.sql
@@ -117,8 +121,11 @@ def db_delete(cursor, db):
     cursor.execute(query)
     return True
 
-def db_dump(module, host, user, password, db_name, target, all_databases, port, config_file, socket=None, ssl_cert=None, ssl_key=None, ssl_ca=None, single_transaction=None, quick=None):
-    cmd = module.get_bin_path('mysqldump', True)
+def db_dump(module, host, user, password, db_name, target, all_databases, port, config_file, socket=None, ssl_cert=None, ssl_key=None, ssl_ca=None, single_transaction=None, quick=None, mysqlpath=None):
+    if mysqlpath is not None:
+        cmd = mysqlpath+'/mysqldump'
+    else: 
+        cmd = module.get_bin_path('mysqldump', True)
     # If defined, mysqldump demands --defaults-extra-file be the first option
     if config_file:
         cmd += " --defaults-extra-file=%s" % pipes.quote(config_file)
@@ -161,11 +168,14 @@ def db_dump(module, host, user, password, db_name, target, all_databases, port, 
     rc, stdout, stderr = module.run_command(cmd, use_unsafe_shell=True)
     return rc, stdout, stderr
 
-def db_import(module, host, user, password, db_name, target, all_databases, port, config_file, socket=None, ssl_cert=None, ssl_key=None, ssl_ca=None):
+def db_import(module, host, user, password, db_name, target, all_databases, port, config_file, socket=None, ssl_cert=None, ssl_key=None, ssl_ca=None, mysqlpath=None):
     if not os.path.exists(target):
         return module.fail_json(msg="target %s does not exist on the host" % target)
 
-    cmd = [module.get_bin_path('mysql', True)]
+    if mysqlpath is not None:
+        cmd = [mysqlpath+'/mysql']
+    else:
+        cmd = [module.get_bin_path('mysql', True)]
     # --defaults-file must go first, or errors out
     if config_file:
         cmd.append("--defaults-extra-file=%s" % pipes.quote(config_file))
@@ -248,6 +258,7 @@ def main():
             config_file=dict(default="~/.my.cnf", type='path'),
             single_transaction=dict(default=False, type='bool'),
             quick=dict(default=True, type='bool'),
+            mysqlpath=dict(default=None, type='path'),
         ),
         supports_check_mode=True
     )
@@ -274,6 +285,7 @@ def main():
     login_host = module.params["login_host"]
     single_transaction = module.params["single_transaction"]
     quick = module.params["quick"]
+    mysqlpath = module.params["mysqlpath"]
 
     if state in ['dump','import']:
         if target is None:
@@ -287,8 +299,7 @@ def main():
         if db == 'all':
             module.fail_json(msg="name is not allowed to equal 'all' unless state equals import, or dump.")
     try:
-        cursor = mysql_connect(module, login_user, login_password, config_file, ssl_cert, ssl_key, ssl_ca,
-                               connect_timeout=connect_timeout)
+        cursor = mysql_connect(module, login_user, login_password, config_file, ssl_cert, ssl_key, ssl_ca, connect_timeout=connect_timeout)
     except Exception, e:
         if os.path.exists(config_file):
             module.fail_json(msg="unable to connect to database, check login_user and login_password are correct or %s has the credentials. Exception message: %s" % (config_file, e))
@@ -313,7 +324,7 @@ def main():
             else:
                 rc, stdout, stderr = db_dump(module, login_host, login_user,
                                             login_password, db, target, all_databases,
-                                            login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca)
+                                            login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca, single_transaction, quick, mysqlpath)
                 if rc != 0:
                     module.fail_json(msg="%s" % stderr)
                 else:
@@ -324,7 +335,7 @@ def main():
             else:
                 rc, stdout, stderr = db_import(module, login_host, login_user,
                                             login_password, db, target, all_databases,
-                                            login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca)
+                                            login_port, config_file, socket, ssl_cert, ssl_key, ssl_ca, mysqlpath)
                 if rc != 0:
                     module.fail_json(msg="%s" % stderr)
                 else:
